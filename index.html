@@ -423,6 +423,11 @@ function switchTab(name) {
 // ── Scan ─────────────────────────────────────────────────────────────────────
 async function runScan(isBt = false, btDate = null) {
   const s = getSettings();
+  if (isBt) {
+    s.volRatio = parseFloat(document.getElementById('btVol').value) || s.volRatio;
+    s.priceChg = parseFloat(document.getElementById('btChg').value) || s.priceChg;
+    s.requireHigh = false;
+  }
   const btnId = isBt ? null : 'scanBtn';
   const progressId = isBt ? 'btProgressWrap' : 'progressWrap';
   const fillId = isBt ? 'btProgressFill' : 'progressFill';
@@ -437,20 +442,33 @@ async function runScan(isBt = false, btDate = null) {
   document.getElementById(txtId).textContent = 'Connecting to screener...';
 
   try {
-    let url = s.workerUrl;
-    if (btDate) url += '?date=' + btDate;
+    const baseUrl = new URL(s.workerUrl);
+    if (btDate) baseUrl.searchParams.set('date', btDate);
+    baseUrl.searchParams.set('limit', '20');
 
-    document.getElementById(fillId).style.width = '40%';
     document.getElementById(txtId).textContent = 'Fetching data for ~600 tickers...';
 
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Worker error ' + res.status);
-    const data = await res.json();
+    let offset = 0;
+    let scanned = 600;
+    let mergedAlerts = [];
+
+    while (offset != null) {
+      baseUrl.searchParams.set('offset', String(offset));
+      const res = await fetch(baseUrl.toString());
+      if (!res.ok) throw new Error('Worker error ' + res.status);
+      const page = await res.json();
+      scanned = page.scanned || scanned;
+      mergedAlerts = mergedAlerts.concat(page.alerts || []);
+      offset = page.nextOffset;
+      const progress = Math.min(78, 10 + Math.round(((page.nextOffset || scanned) / scanned) * 68));
+      document.getElementById(fillId).style.width = progress + '%';
+      document.getElementById(txtId).textContent = `Fetched ${Math.min(page.nextOffset || scanned, scanned)} of ${scanned} tickers...`;
+    }
 
     document.getElementById(fillId).style.width = '80%';
     document.getElementById(txtId).textContent = 'Applying filters...';
 
-    let results = (data.alerts || []).filter(q => {
+    let results = mergedAlerts.filter(q => {
       if (s.minPrice > 0 && q.current < s.minPrice) return false;
       if (s.maxPrice > 0 && q.current > s.maxPrice) return false;
       if (q.volRatio < s.volRatio) return false;
@@ -466,7 +484,7 @@ async function runScan(isBt = false, btDate = null) {
     } else {
       allResults = results;
       renderResults(results);
-      updateStats(data.scanned || 600, results);
+      updateStats(scanned, results);
       saveToHistory(results);
       document.getElementById('scanInfo').textContent = `Last scan: ${new Date().toLocaleTimeString()} · ${results.length} alerts`;
     }

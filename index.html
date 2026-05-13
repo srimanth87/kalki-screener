@@ -50,6 +50,9 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 .setting-sub{font-size:10px;color:var(--text3);margin-top:2px;}
 .setting-input{background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:13px;padding:4px 8px;width:80px;text-align:right;outline:none;}
 .setting-input:focus{border-color:var(--accent);}
+.preset-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem;}
+.preset-btn{height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-family:var(--mono);font-size:11px;cursor:pointer;}
+.preset-btn:hover{border-color:var(--accent);color:var(--accent);}
 .toggle{width:36px;height:20px;border-radius:10px;background:var(--border2);cursor:pointer;position:relative;transition:background .2s;flex-shrink:0;}
 .toggle.on{background:var(--accent);}
 .toggle::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;top:3px;left:3px;transition:transform .2s;}
@@ -64,6 +67,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 .scan-btn-sec:hover{border-color:var(--accent);color:var(--accent);}
 .date-input{height:36px;background:var(--bg);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;padding:0 10px;outline:none;}
 .scan-info{font-size:11px;color:var(--text3);margin-left:auto;}
+.criteria-pill{font-size:10px;color:var(--text3);border:1px solid var(--border2);border-radius:20px;padding:5px 10px;white-space:nowrap;}
 
 /* Progress */
 .progress-wrap{display:none;margin-bottom:1rem;}
@@ -163,6 +167,8 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     <div class="scan-bar">
       <button class="scan-btn" id="scanBtn" onclick="runScan()">⚡ Scan Now</button>
       <button class="scan-btn-sec" onclick="clearResults()">Clear</button>
+      <button class="scan-btn-sec" onclick="switchTab('settings')">Settings</button>
+      <span class="criteria-pill" id="criteriaSummary">Strict: 2.0x vol · +3.0% · 20D high</span>
       <span class="scan-info" id="scanInfo">Ready to scan ~600 tickers</span>
     </div>
 
@@ -259,6 +265,11 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 
       <div class="setting-card">
         <div class="setting-title">Screening Criteria</div>
+        <div class="preset-row">
+          <button class="preset-btn" onclick="applyPreset('strict')">Strict Breakout</button>
+          <button class="preset-btn" onclick="applyPreset('balanced')">Balanced</button>
+          <button class="preset-btn" onclick="applyPreset('watch')">Watchlist</button>
+        </div>
         <div class="setting-row">
           <div>
             <div class="setting-label">Min Volume Ratio</div>
@@ -294,6 +305,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
           </div>
           <input class="setting-input" type="number" id="setMaxPrice" value="0" step="10" min="0"/>
         </div>
+        <button class="scan-btn-sec" style="width:100%;margin-top:.5rem;" onclick="resetSettings()">Reset Strict Defaults</button>
       </div>
 
       <div class="setting-card">
@@ -351,10 +363,25 @@ let allResults = [];
 let scanHistory = JSON.parse(localStorage.getItem('kalki_scan_history') || '[]');
 let autoScanInterval = null;
 let currentFilter = 'all';
+const SETTINGS_VERSION = 2;
+const DEFAULT_SETTINGS = {
+  version: SETTINGS_VERSION,
+  volRatio: 2.0,
+  priceChg: 3.0,
+  requireHigh: true,
+  minPrice: 5,
+  maxPrice: 0,
+  workerUrl: 'https://kalki-screener.srimanthgada87.workers.dev/scan',
+  scorerUrl: 'https://kalki-pattern-scorer-ui.pages.dev',
+  telegram: false,
+  sound: false,
+  autoScan: false,
+};
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 function getSettings() {
   return {
+    version: SETTINGS_VERSION,
     volRatio: parseFloat(document.getElementById('setVolRatio').value) || 2.0,
     priceChg: parseFloat(document.getElementById('setPriceChg').value) || 3.0,
     requireHigh: document.getElementById('toggleHighReq').classList.contains('on'),
@@ -370,29 +397,64 @@ function getSettings() {
 
 function saveSettings() {
   localStorage.setItem('kalki_settings', JSON.stringify(getSettings()));
+  updateCriteriaSummary();
   showNotif('✅ Settings saved');
 }
 
 function loadSettings() {
-  const s = JSON.parse(localStorage.getItem('kalki_settings') || '{}');
-  if (s.volRatio) document.getElementById('setVolRatio').value = s.volRatio;
-  if (s.priceChg) document.getElementById('setPriceChg').value = s.priceChg;
-  if (s.minPrice != null) document.getElementById('setMinPrice').value = s.minPrice;
-  if (s.maxPrice != null) document.getElementById('setMaxPrice').value = s.maxPrice;
-  if (s.workerUrl) document.getElementById('setWorkerUrl').value = s.workerUrl;
-  if (s.scorerUrl) document.getElementById('setScorerUrl').value = s.scorerUrl;
-  if (s.requireHigh === false) document.getElementById('toggleHighReq').classList.remove('on');
-  if (s.telegram) document.getElementById('toggleTelegram').classList.add('on');
-  if (s.sound) document.getElementById('toggleSound').classList.add('on');
-  if (s.autoScan) { document.getElementById('toggleAuto').classList.add('on'); startAutoScan(); }
+  const saved = JSON.parse(localStorage.getItem('kalki_settings') || '{}');
+  const s = saved.version === SETTINGS_VERSION ? { ...DEFAULT_SETTINGS, ...saved } : DEFAULT_SETTINGS;
+  applySettings(s);
+  localStorage.setItem('kalki_settings', JSON.stringify(s));
+  if (s.autoScan) startAutoScan();
 }
 
 function toggleSetting(el) {
   el.classList.toggle('on');
+  updateCriteriaSummary();
   if (el.id === 'toggleAuto') {
     if (el.classList.contains('on')) startAutoScan();
     else stopAutoScan();
   }
+}
+
+function applySettings(s) {
+  document.getElementById('setVolRatio').value = s.volRatio;
+  document.getElementById('setPriceChg').value = s.priceChg;
+  document.getElementById('setMinPrice').value = s.minPrice;
+  document.getElementById('setMaxPrice').value = s.maxPrice;
+  document.getElementById('setWorkerUrl').value = s.workerUrl;
+  document.getElementById('setScorerUrl').value = s.scorerUrl;
+  document.getElementById('toggleHighReq').classList.toggle('on', Boolean(s.requireHigh));
+  document.getElementById('toggleTelegram').classList.toggle('on', Boolean(s.telegram));
+  document.getElementById('toggleSound').classList.toggle('on', Boolean(s.sound));
+  document.getElementById('toggleAuto').classList.toggle('on', Boolean(s.autoScan));
+  updateCriteriaSummary();
+}
+
+function applyPreset(name) {
+  const current = getSettings();
+  const presets = {
+    strict: { volRatio: 2.0, priceChg: 3.0, requireHigh: true, minPrice: 5, maxPrice: 0 },
+    balanced: { volRatio: 1.5, priceChg: 1.5, requireHigh: false, minPrice: 5, maxPrice: 0 },
+    watch: { volRatio: 1.2, priceChg: 1.0, requireHigh: false, minPrice: 5, maxPrice: 0 },
+  };
+  applySettings({ ...current, ...presets[name], version: SETTINGS_VERSION });
+  saveSettings();
+}
+
+function resetSettings() {
+  applySettings(DEFAULT_SETTINGS);
+  saveSettings();
+}
+
+function updateCriteriaSummary() {
+  const el = document.getElementById('criteriaSummary');
+  if (!el) return;
+  const s = getSettings();
+  const high = s.requireHigh ? ' · 20D high' : '';
+  const label = s.volRatio >= 2 && s.priceChg >= 3 && s.requireHigh ? 'Strict' : s.volRatio >= 1.5 && s.priceChg >= 1.5 ? 'Balanced' : 'Watch';
+  el.textContent = `${label}: ${s.volRatio.toFixed(1)}x vol · +${s.priceChg.toFixed(1)}%${high}`;
 }
 
 // ── Market hours ──────────────────────────────────────────────────────────────

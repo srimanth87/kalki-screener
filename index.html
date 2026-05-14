@@ -413,9 +413,13 @@ function getSettings() {
 }
 
 function saveSettings() {
-  localStorage.setItem('kalki_settings', JSON.stringify(getSettings()));
+  persistSettings();
   updateCriteriaSummary();
   showNotif('✅ Settings saved');
+}
+
+function persistSettings() {
+  localStorage.setItem('kalki_settings', JSON.stringify(getSettings()));
 }
 
 function loadSettings() {
@@ -433,6 +437,7 @@ function toggleSetting(el) {
     if (el.classList.contains('on')) startAutoScan();
     else stopAutoScan();
   }
+  persistSettings();
 }
 
 function applySettings(s) {
@@ -569,7 +574,8 @@ async function runScan(isBt = false, btDate = null) {
       saveToHistory(results);
       document.getElementById('scanInfo').textContent = `Last scan: ${new Date().toLocaleTimeString()} · ${results.length} alerts`;
       if (s.autoScore && results.length > 0) await scoreResults(results);
-      if (s.telegram && results.length > 0) await sendTelegramAlerts(results);
+      const latestSettings = getSettings();
+      if (latestSettings.telegram && results.length > 0) await sendTelegramAlerts(results);
     }
 
     if (s.sound && results.length > 0) playBeep();
@@ -653,24 +659,33 @@ async function scoreResults(results) {
 async function sendTelegramAlerts(results) {
   const s = getSettings();
   const alertUrl = s.workerUrl.replace(/\/scan(?:\?.*)?$/, '/alert');
-  const scoredCount = results.filter(q => q.patternScore).length;
-  if (s.autoScore && scoredCount < results.length) {
-    showNotif('⏳ Waiting for scores before Telegram alerts');
+  const pending = results.filter(q => q.scoreStatus === 'loading').length;
+  if (s.autoScore && pending > 0) {
+    showNotif(`⏳ Waiting for ${pending} score${pending === 1 ? '' : 's'} before Telegram alerts`);
     return;
   }
 
   showNotif(`📨 Sending Telegram alerts for ${results.length} ticker${results.length === 1 ? '' : 's'}...`);
+  let sent = 0;
+  let failed = 0;
   for (const q of results) {
-    const res = await fetch(alertUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ alert: q, score: q.patternScore || null }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) throw new Error(data.error || `Telegram alert error ${res.status}`);
+    try {
+      const res = await fetch(alertUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alert: q, score: q.patternScore || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error || `Telegram alert error ${res.status}`);
+      sent += 1;
+    } catch (err) {
+      failed += 1;
+      q.telegramError = err.message;
+    }
     await new Promise(r => setTimeout(r, 250));
   }
-  showNotif('✅ Telegram alerts sent');
+  if (failed > 0) showNotif(`⚠️ Telegram sent ${sent}, failed ${failed}`);
+  else showNotif(`✅ Telegram alerts sent (${sent})`);
 }
 
 async function scoreOneTicker(ticker) {

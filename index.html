@@ -110,6 +110,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 .score-b{background:rgba(255,171,64,.12);color:var(--amber);border:1px solid rgba(255,171,64,.25);}
 .score-c{background:rgba(255,138,101,.12);color:#ff8a65;border:1px solid rgba(255,138,101,.25);}
 .score-d{background:rgba(255,82,82,.12);color:var(--red);border:1px solid rgba(255,82,82,.25);}
+.score-muted{background:rgba(255,255,255,.05);color:var(--text3);border:1px solid var(--border2);}
 .action-btn{height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-family:var(--mono);font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;}
 .action-btn:hover{border-color:var(--accent);color:var(--accent);}
 
@@ -203,11 +204,12 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
             <th>Vol Ratio</th>
             <th>20d High</th>
             <th>Signal</th>
+            <th>Score</th>
             <th>Action</th>
           </tr>
         </thead>
         <tbody id="resultsBody">
-          <tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🔍</div>Hit Scan Now to find breakouts</div></td></tr>
+          <tr><td colspan="9"><div class="empty-state"><div class="empty-icon">🔍</div>Hit Scan Now to find breakouts</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -331,6 +333,13 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
           </div>
           <div class="toggle" id="toggleSound" onclick="toggleSetting(this)"></div>
         </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Auto-fetch Scores</div>
+            <div class="setting-sub">score each scan alert automatically</div>
+          </div>
+          <div class="toggle" id="toggleAutoScore" onclick="toggleSetting(this)"></div>
+        </div>
       </div>
 
       <div class="setting-card">
@@ -342,6 +351,10 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
           </div>
         </div>
         <input class="setting-input" type="text" id="setScorerUrl" value="https://kalki-pattern-scorer-ui.pages.dev" style="width:100%;font-size:11px;margin-top:4px;"/>
+        <div style="margin-top:1rem;">
+          <div class="setting-label" style="margin-bottom:.5rem;">Pattern Score Worker URL</div>
+          <input class="setting-input" type="text" id="setScorerWorkerUrl" value="https://kalki-pattern-scorer.srimanthgada87.workers.dev/analyze" style="width:100%;font-size:11px;"/>
+        </div>
         <div style="margin-top:1rem;">
           <div class="setting-label" style="margin-bottom:.5rem;">Worker URL</div>
           <input class="setting-input" type="text" id="setWorkerUrl" value="https://kalki-screener.srimanthgada87.workers.dev/scan" style="width:100%;font-size:11px;"/>
@@ -363,7 +376,7 @@ let allResults = [];
 let scanHistory = JSON.parse(localStorage.getItem('kalki_scan_history') || '[]');
 let autoScanInterval = null;
 let currentFilter = 'all';
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 const DEFAULT_SETTINGS = {
   version: SETTINGS_VERSION,
   volRatio: 2.0,
@@ -373,9 +386,11 @@ const DEFAULT_SETTINGS = {
   maxPrice: 0,
   workerUrl: 'https://kalki-screener.srimanthgada87.workers.dev/scan',
   scorerUrl: 'https://kalki-pattern-scorer-ui.pages.dev',
+  scorerWorkerUrl: 'https://kalki-pattern-scorer.srimanthgada87.workers.dev/analyze',
   telegram: false,
   sound: false,
   autoScan: false,
+  autoScore: false,
 };
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -389,9 +404,11 @@ function getSettings() {
     maxPrice: parseFloat(document.getElementById('setMaxPrice').value) || 0,
     workerUrl: document.getElementById('setWorkerUrl').value.trim(),
     scorerUrl: document.getElementById('setScorerUrl').value.trim(),
+    scorerWorkerUrl: document.getElementById('setScorerWorkerUrl').value.trim(),
     telegram: document.getElementById('toggleTelegram').classList.contains('on'),
     sound: document.getElementById('toggleSound').classList.contains('on'),
     autoScan: document.getElementById('toggleAuto').classList.contains('on'),
+    autoScore: document.getElementById('toggleAutoScore').classList.contains('on'),
   };
 }
 
@@ -425,10 +442,12 @@ function applySettings(s) {
   document.getElementById('setMaxPrice').value = s.maxPrice;
   document.getElementById('setWorkerUrl').value = s.workerUrl;
   document.getElementById('setScorerUrl').value = s.scorerUrl;
+  document.getElementById('setScorerWorkerUrl').value = s.scorerWorkerUrl;
   document.getElementById('toggleHighReq').classList.toggle('on', Boolean(s.requireHigh));
   document.getElementById('toggleTelegram').classList.toggle('on', Boolean(s.telegram));
   document.getElementById('toggleSound').classList.toggle('on', Boolean(s.sound));
   document.getElementById('toggleAuto').classList.toggle('on', Boolean(s.autoScan));
+  document.getElementById('toggleAutoScore').classList.toggle('on', Boolean(s.autoScore));
   updateCriteriaSummary();
 }
 
@@ -549,6 +568,7 @@ async function runScan(isBt = false, btDate = null) {
       updateStats(scanned, results);
       saveToHistory(results);
       document.getElementById('scanInfo').textContent = `Last scan: ${new Date().toLocaleTimeString()} · ${results.length} alerts`;
+      if (s.autoScore && results.length > 0) scoreResults(results);
     }
 
     if (s.sound && results.length > 0) playBeep();
@@ -571,7 +591,7 @@ function renderResults(results) {
   const s = getSettings();
 
   if (!results.length) {
-    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">😴</div>No breakouts found — try adjusting criteria in Settings</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">😴</div>No breakouts found — try adjusting criteria in Settings</div></td></tr>`;
     return;
   }
 
@@ -589,13 +609,74 @@ function renderResults(results) {
       <td><span class="score-pill ${volClass}">${q.volRatio.toFixed(1)}x</span></td>
       <td>${q.new20DayHigh ? '<span class="score-pill score-a">✓ New High</span>' : '<span class="score-pill score-c">—</span>'}</td>
       <td><span class="score-pill ${signal.cls}">${signal.label}</span></td>
+      <td>${renderPatternScore(q)}</td>
       <td>
-        <button class="action-btn" onclick="openScorer('${q.ticker}')">Score ↗</button>
+        <button class="action-btn" onclick="scoreOneTicker('${q.ticker}')">Score</button>
+        <button class="action-btn" onclick="openScorer('${q.ticker}')">Open ↗</button>
       </td>
     </tr>`;
   }).join('');
 
   document.getElementById('resultsTitle').textContent = `Alerts — ${filtered.length} found`;
+}
+
+function renderPatternScore(q) {
+  if (q.scoreStatus === 'loading') return '<span class="score-pill score-muted">Scoring...</span>';
+  if (q.scoreStatus === 'error') return '<span class="score-pill score-d">Error</span>';
+  if (!q.patternScore) return '<span class="score-pill score-muted">—</span>';
+  const grade = q.patternScore.grade || '—';
+  const score = q.patternScore.score ?? '—';
+  const cls = grade === 'A+' || grade === 'A' ? 'score-a' : grade === 'B' ? 'score-b' : grade === 'C' ? 'score-c' : 'score-d';
+  return `<span class="score-pill ${cls}">${grade} · ${score}/10</span>`;
+}
+
+async function scoreResults(results) {
+  showNotif(`🧠 Fetching pattern scores for ${results.length} alert${results.length === 1 ? '' : 's'}...`);
+  for (const q of results) {
+    if (q.patternScore) continue;
+    q.scoreStatus = 'loading';
+    renderResults(allResults);
+    try {
+      q.patternScore = await fetchPatternScore(q.ticker);
+      q.scoreStatus = 'done';
+    } catch (err) {
+      q.scoreStatus = 'error';
+      q.scoreError = err.message;
+    }
+    renderResults(allResults);
+  }
+  saveToHistory(allResults);
+  showNotif('✅ Pattern scores updated');
+}
+
+async function scoreOneTicker(ticker) {
+  const q = allResults.find(r => r.ticker === ticker);
+  if (!q) return;
+  q.scoreStatus = 'loading';
+  renderResults(allResults);
+  try {
+    q.patternScore = await fetchPatternScore(ticker);
+    q.scoreStatus = 'done';
+    saveToHistory(allResults);
+    showNotif(`✅ ${ticker} scored ${q.patternScore.grade || '—'} · ${q.patternScore.score ?? '—'}/10`);
+  } catch (err) {
+    q.scoreStatus = 'error';
+    q.scoreError = err.message;
+    showNotif(`❌ ${ticker} score failed: ${err.message}`);
+  }
+  renderResults(allResults);
+}
+
+async function fetchPatternScore(ticker) {
+  const s = getSettings();
+  const res = await fetch(s.scorerWorkerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticker, timeframe: '1d', note: 'Triggered from Kalki Screener breakout alert' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `Scorer error ${res.status}`);
+  return data.result;
 }
 
 function getSignal(q) {
@@ -627,7 +708,7 @@ function updateStats(scanned, alerts) {
 
 function clearResults() {
   allResults = [];
-  document.getElementById('resultsBody').innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🔍</div>Hit Scan Now to find breakouts</div></td></tr>`;
+  document.getElementById('resultsBody').innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">🔍</div>Hit Scan Now to find breakouts</div></td></tr>`;
   document.getElementById('statScanned').textContent = '—';
   document.getElementById('statAlerts').textContent = '—';
   document.getElementById('statVol').textContent = '—';

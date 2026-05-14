@@ -1,0 +1,10 @@
+name = "kalki-screener"
+main = "src/worker.js"
+compatibility_date = "2024-01-01"
+
+[triggers]
+crons = ["*/30 13-20 * * 1-5"]
+
+# Secrets to set via: wrangler secret put <NAME>
+# TELEGRAM_BOT_TOKEN  — your Kalki bot token
+# TELEGRAM_CHAT_ID    — your personal chat ID (1026720092)

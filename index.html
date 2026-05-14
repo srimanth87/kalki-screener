@@ -568,7 +568,8 @@ async function runScan(isBt = false, btDate = null) {
       updateStats(scanned, results);
       saveToHistory(results);
       document.getElementById('scanInfo').textContent = `Last scan: ${new Date().toLocaleTimeString()} · ${results.length} alerts`;
-      if (s.autoScore && results.length > 0) scoreResults(results);
+      if (s.autoScore && results.length > 0) await scoreResults(results);
+      if (s.telegram && results.length > 0) await sendTelegramAlerts(results);
     }
 
     if (s.sound && results.length > 0) playBeep();
@@ -647,6 +648,29 @@ async function scoreResults(results) {
   }
   saveToHistory(allResults);
   showNotif('✅ Pattern scores updated');
+}
+
+async function sendTelegramAlerts(results) {
+  const s = getSettings();
+  const alertUrl = s.workerUrl.replace(/\/scan(?:\?.*)?$/, '/alert');
+  const scoredCount = results.filter(q => q.patternScore).length;
+  if (s.autoScore && scoredCount < results.length) {
+    showNotif('⏳ Waiting for scores before Telegram alerts');
+    return;
+  }
+
+  showNotif(`📨 Sending Telegram alerts for ${results.length} ticker${results.length === 1 ? '' : 's'}...`);
+  for (const q of results) {
+    const res = await fetch(alertUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alert: q, score: q.patternScore || null }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || `Telegram alert error ${res.status}`);
+    await new Promise(r => setTimeout(r, 250));
+  }
+  showNotif('✅ Telegram alerts sent');
 }
 
 async function scoreOneTicker(ticker) {

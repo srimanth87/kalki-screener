@@ -1,0 +1,15 @@
+{
+  "name": "kalki-screener",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "check": "node --check src/worker.js",
+    "dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "pages:deploy": "wrangler pages deploy . --project-name kalki-screener --branch main",
+    "deploy": "npm run worker:deploy && npm run pages:deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.90.1"
+  }
+}

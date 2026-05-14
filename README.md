@@ -10,10 +10,11 @@ https://kalki-screener.srimanthgada87.workers.dev/scan
 
 ## Deploy
 
-Pushing to `main` deploys the UI to Cloudflare Pages with GitHub Actions:
+Pushing to `main` deploys the Worker and UI to Cloudflare with GitHub Actions:
 
 ```text
-index.html -> kalki-screener.pages.dev
+src/worker.js -> kalki-screener.srimanthgada87.workers.dev
+index.html    -> kalki-screener.pages.dev
 ```
 
 Required GitHub repository secrets:
